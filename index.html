@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>P2P 通话 · P2P Call</title>
+<meta name="description" content="基于 WebRTC 的点对点音视频通话静态网站，部署在 GitHub Pages。" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>" />
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  :root{
+    --bg:#0b0f17; --bg2:#111827; --card:#151d2e; --card2:#1c2740;
+    --line:#25304a; --txt:#e7ecf5; --dim:#93a0b8;
+    --acc:#4f8cff; --acc2:#7aa2ff; --good:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --r:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+    background:radial-gradient(1200px 700px at 50% -10%,#16203a 0%,var(--bg) 55%);
+    color:var(--txt); -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column; min-height:100vh;
+  }
+  header{
+    padding:18px 20px; display:flex; align-items:center; gap:10px;
+    border-bottom:1px solid var(--line); backdrop-filter:blur(6px);
+  }
+  .logo{font-size:22px}
+  header h1{font-size:17px; margin:0; font-weight:650; letter-spacing:.3px}
+  header .sub{color:var(--dim); font-size:12px; margin-left:auto; text-align:right}
+  main{flex:1; width:100%; max-width:1040px; margin:0 auto; padding:22px 18px 40px}
+
+  .card{background:linear-gradient(180deg,var(--card),var(--card2)); border:1px solid var(--line);
+        border-radius:var(--r); padding:22px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .hidden{display:none !important}
+
+  /* ---- lobby ---- */
+  .lobby{max-width:520px; margin:24px auto 0}
+  .lobby h2{margin:0 0 6px; font-size:22px}
+  .lobby p.lead{margin:0 0 18px; color:var(--dim); font-size:14px; line-height:1.6}
+  label{display:block; font-size:13px; color:var(--dim); margin:14px 0 6px}
+  input[type=text]{
+    width:100%; padding:13px 14px; border-radius:12px; border:1px solid var(--line);
+    background:#0d1424; color:var(--txt); font-size:15px; outline:none; letter-spacing:1px;
+  }
+  input[type=text]:focus{border-color:var(--acc); box-shadow:0 0 0 3px rgba(79,140,255,.18)}
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    padding:13px 18px; border-radius:12px; border:1px solid transparent; font-size:15px; font-weight:600;
+    cursor:pointer; transition:.15s; width:100%;
+  }
+  .btn:disabled{opacity:.5; cursor:not-allowed}
+  .btn-primary{background:linear-gradient(180deg,var(--acc2),var(--acc)); color:#08111f}
+  .btn-primary:hover:not(:disabled){filter:brightness(1.07)}
+  .btn-ghost{background:#0f1728; border-color:var(--line); color:var(--txt); margin-top:10px}
+  .btn-ghost:hover:not(:disabled){border-color:var(--acc)}
+  .divider{display:flex; align-items:center; gap:10px; color:var(--dim); font-size:12px; margin:18px 0 4px}
+  .divider::before,.divider::after{content:""; flex:1; height:1px; background:var(--line)}
+
+  .codebox{
+    display:flex; gap:8px; align-items:center; margin-top:8px; padding:12px 14px;
+    background:#0d1424; border:1px dashed var(--line); border-radius:12px;
+  }
+  .codebox code{font-size:20px; font-weight:700; letter-spacing:3px; color:var(--acc2); flex:1; word-break:break-all}
+  .copy{padding:8px 12px; border-radius:9px; border:1px solid var(--line); background:#16203a; color:var(--txt); cursor:pointer; font-size:13px}
+  .copy:hover{border-color:var(--acc)}
+
+  .status{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--dim); margin-top:16px; min-height:20px}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--dim); flex:none}
+  .dot.ok{background:var(--good); box-shadow:0 0 0 4px rgba(52,211,153,.15)}
+  .dot.warn{background:var(--warn)}
+  .dot.bad{background:var(--bad)}
+
+  /* ---- call ---- */
+  .stage{position:relative; background:#070a11; border:1px solid var(--line); border-radius:var(--r);
+         overflow:hidden; aspect-ratio:16/9; max-height:70vh}
+  #remoteVideo{width:100%; height:100%; object-fit:cover; background:#070a11; display:block}
+  #remoteVideo.empty{opacity:0}
+  .self{
+    position:absolute; right:12px; bottom:12px; width:26%; max-width:240px; aspect-ratio:16/9;
+    border-radius:12px; overflow:hidden; border:1px solid var(--line); background:#0d1424; box-shadow:0 6px 20px rgba(0,0,0,.4)
+  }
+  #localVideo{width:100%; height:100%; object-fit:cover; transform:scaleX(-1)}
+  .self.hidden-self{display:none}
+  .badge{
+    position:absolute; left:12px; top:12px; padding:6px 11px; border-radius:999px;
+    background:rgba(10,15,26,.7); border:1px solid var(--line); font-size:12px; color:var(--dim);
+    backdrop-filter:blur(6px); display:flex; align-items:center; gap:7px
+  }
+  .placeholder{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:var(--dim); gap:10px; text-align:center; padding:20px
+  }
+  .placeholder .big{font-size:46px; opacity:.6}
+  .spinner{width:26px; height:26px; border:3px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .controls{display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:18px}
+  .ctrl{
+    display:flex; align-items:center; gap:8px; padding:12px 18px; border-radius:999px;
+    background:#111a2c; border:1px solid var(--line); color:var(--txt); font-size:14px; font-weight:600; cursor:pointer; transition:.15s
+  }
+  .ctrl:hover{border-color:var(--acc)}
+  .ctrl.off{background:#2a1620; border-color:#5b2433; color:#ffb4c0}
+  .ctrl.danger{background:#3a1620; border-color:#7f2d3f; color:#ffc2cc}
+  .ctrl.danger:hover{background:#4d1b28}
+  .ctrl .ic{font-size:16px}
+
+  .chatwrap{margin-top:18px}
+  .chatbox{height:180px; overflow-y:auto; background:#0d1424; border:1px solid var(--line); border-radius:12px; padding:12px; font-size:14px}
+  .msg{margin-bottom:8px; line-height:1.5; word-break:break-word}
+  .msg b{color:var(--acc2); font-weight:600}
+  .msg.sys{color:var(--dim); font-style:italic}
+  .chatrow{display:flex; gap:8px; margin-top:10px}
+  .chatrow input{flex:1; letter-spacing:0}
+  .chatrow .btn{width:auto; padding:13px 20px}
+
+  .info{margin-top:16px; font-size:12px; color:var(--dim); text-align:center; line-height:1.6}
+  .info code{background:#0d1424; padding:2px 6px; border-radius:6px}
+  @media (max-width:560px){
+    .controls{gap:8px} .ctrl{padding:11px 14px; font-size:13px}
+    header .sub{display:none} .stage{aspect-ratio:4/3}
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">📹</span>
+  <h1>P2P 通话</h1>
+  <span class="sub">WebRTC 端到端 · 音视频/屏幕共享/文字</span>
+</header>
+
+<main>
+  <!-- ================= Lobby ================= -->
+  <section id="lobby" class="card lobby">
+    <h2>发起或加入通话</h2>
+    <p class="lead">
+      音视频在你和对方之间<strong>直连</strong>传输（WebRTC），不经服务器存储。
+      把「房间码」发给对方即可加入。
+    </p>
+
+    <label for="joinInput">加入房间 · 输入对方给你的房间码</label>
+    <input type="text" id="joinInput" placeholder="例如：ABCD-1234" autocomplete="off" style="text-transform:uppercase" />
+    <button class="btn btn-primary" id="btnJoin" style="margin-top:12px">🔗 加入房间</button>
+
+    <div class="divider">或者创建新房间</div>
+
+    <button class="btn btn-ghost" id="btnCreate" style="margin-top:0">🎥 创建房间（获取房间码）</button>
+
+    <div id="createdBox" class="hidden">
+      <label>你的房间码 · 发给对方</label>
+      <div class="codebox">
+        <code id="roomCode">—</code>
+        <button class="copy" id="btnCopy">复制</button>
+      </div>
+      <label>分享链接</label>
+      <div class="codebox">
+        <code id="shareLink" style="font-size:13px;letter-spacing:0">—</code>
+        <button class="copy" id="btnCopyLink">复制</button>
+      </div>
+    </div>
+
+    <div class="status"><span class="dot" id="lobbyDot"></span><span id="lobbyStatus">未连接</span></div>
+    <p class="info" style="text-align:left;margin-top:14px">
+      提示：部分严格网络需要 TURN 中继才能直连。本站默认仅用公共 STUN，可直连绝大多数家庭/办公网络。
+    </p>
+  </section>
+
+  <!-- ================= Call ================= -->
+  <section id="call" class="hidden">
+    <div class="stage">
+      <video id="remoteVideo" class="empty" autoplay playsinline></video>
+      <div id="remotePlaceholder" class="placeholder">
+        <div class="big" id="phIcon">👋</div>
+        <div id="phText">等待对方加入…</div>
+      </div>
+      <div class="self" id="selfBox">
+        <video id="localVideo" autoplay playsinline muted></video>
+      </div>
+      <div class="badge"><span class="dot" id="callDot"></span><span id="callStatus">正在连接信令…</span></div>
+    </div>
+
+    <div class="controls">
+      <button class="ctrl" id="btnMute"><span class="ic">🎙️</span><span id="muteTxt">静音</span></button>
+      <button class="ctrl" id="btnCam"><span class="ic">📷</span><span id="camTxt">关摄像头</span></button>
+      <button class="ctrl" id="btnScreen"><span class="ic">🖥️</span><span id="screenTxt">共享屏幕</span></button>
+      <button class="ctrl" id="btnSelf"><span class="ic">🪞</span>隐藏自己</button>
+      <button class="ctrl danger" id="btnHangup"><span class="ic">📞</span>挂断</button>
+    </div>
+
+    <div class="chatwrap">
+      <div class="chatbox" id="chatBox"></div>
+      <div class="chatrow">
+        <input type="text" id="chatInput" placeholder="发条消息…" autocomplete="off" />
+        <button class="btn btn-primary" id="btnSend">发送</button>
+      </div>
+    </div>
+
+    <p class="info">
+      连接方式：<code id="connInfo">—</code><br />
+      房间码：<code id="callRoom">—</code>
+    </p>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  // 房间码作为 PeerJS 的 peer id（加前缀避免与公共 id 冲突）
+  const NS = "p2pcall-";
+
+  const $ = (id) => document.getElementById(id);
+  const lobby=$("lobby"), call=$("call");
+  const lobbyDot=$("lobbyDot"), lobbyStatus=$("lobbyStatus");
+  const callDot=$("callDot"), callStatus=$("callStatus");
+  const remoteVideo=$("remoteVideo"), localVideo=$("localVideo");
+  const remotePlaceholder=$("remotePlaceholder"), phText=$("phText"), phIcon=$("phIcon");
+  const chatBox=$("chatBox");
+
+  let peer=null, callObj=null, dataConn=null;
+  let localStream=null, screenStream=null, sendingScreen=false;
+  let isHost=false, roomCode="";
+  let micOn=true, camOn=true, selfVisible=true;
+
+  const setLobby=(txt,tone)=>{lobbyStatus.textContent=txt; lobbyDot.className="dot"+(tone?" "+tone:"");};
+  const setCall=(txt,tone)=>{callStatus.textContent=txt; callDot.className="dot"+(tone?" "+tone:"");};
+  const sysMsg=(t)=>{const d=document.createElement("div");d.className="msg sys";d.textContent=t;chatBox.appendChild(d);chatBox.scrollTop=chatBox.scrollHeight;};
+  const chatMsg=(who,t)=>{const d=document.createElement("div");d.className="msg";const b=document.createElement("b");b.textContent=who+"：";d.appendChild(b);d.appendChild(document.createTextNode(t));chatBox.appendChild(d);chatBox.scrollTop=chatBox.scrollHeight;};
+
+  function genCode(){
+    const abc="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const seg=(n)=>Array.from({length:n},()=>abc[Math.floor(Math.random()*abc.length)]).join("");
+    return seg(4)+"-"+seg(4);
+  }
+  function showStage(show){
+    lobby.classList.toggle("hidden",show);
+    call.classList.toggle("hidden",!show);
+  }
+  function setPH(icon,text,spin){
+    phIcon.textContent=icon; phText.textContent=text;
+    remotePlaceholder.querySelector(".spinner")?.remove();
+    if(spin){const s=document.createElement("div");s.className="spinner";remotePlaceholder.insertBefore(s,phIcon);}
+  }
+
+  // ============ media ============
+  async function getMedia(){
+    if(localStream) return localStream;
+    try{
+      localStream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720}},audio:{echoCancellation:true,noiseSuppression:true}});
+    }catch(e){
+      // 允许纯音频
+      try{ localStream = await navigator.mediaDevices.getUserMedia({audio:true}); camOn=false; }
+      catch(e2){ throw new Error("无法访问摄像头/麦克风："+e2.name); }
+    }
+    localVideo.srcObject = localStream;
+    return localStream;
+  }
+
+  // ============ peer setup ============
+  function createPeer(id){
+    return new Peer(id,{
+      config:{
+        iceServers:[
+          {urls:"stun:stun.l.google.com:19302"},
+          {urls:"stun:global.stun.twilio.com:3478"},
+          {urls:"stun:stun.cloudflare.com:3478"},
+        ],
+        sdpSemantics:"unified-plan",
+      },
+      debug:1,
+    });
+  }
+
+  function wireData(conn){
+    dataConn=conn;
+    conn.on("open",()=>{ sysMsg("数据通道已建立，可以发文字消息了。"); });
+    conn.on("data",(d)=>{
+      if(d && d.type==="chat") chatMsg("对方", d.text);
+      else if(d && d.type==="state") applyRemoteState(d);
+    });
+    conn.on("close",()=>sysMsg("对方断开了文字通道。"));
+  }
+
+  function sendState(){
+    if(dataConn && dataConn.open){
+      dataConn.send({type:"state", micOn, camOn, screen: sendingScreen});
+    }
+  }
+  function applyRemoteState(s){
+    if(s.screen) sysMsg("对方开始了屏幕共享。");
+    if(s.camOn===false && s.screen===false) sysMsg("对方关闭了摄像头。");
+  }
+
+  function attachRemote(stream){
+    remoteVideo.srcObject=stream;
+    remoteVideo.classList.remove("empty");
+    setPH("🎬","对方画面已连接",false);
+    remoteVideo.play().catch(()=>{});
+  }
+
+  function setupCall(c){
+    callObj=c;
+    c.on("stream",(stream)=>{ attachRemote(stream); setCall("已连接 · 通话中","ok"); });
+    c.on("close",()=>{ sysMsg("对方已挂断。"); endCall(false); });
+    c.on("error",(e)=>{ setCall("通话错误："+e.type,"bad"); });
+    c.on("iceStateChanged",(st)=>{ $("connInfo").textContent = st; });
+    // 数据通道由 peer 的 "connection" 事件单独处理，这里不重复绑定
+  }
+
+  function enterStage(){
+    showStage(true); $("callRoom").textContent=roomCode;
+    $("connInfo").textContent="协商中…";
+  }
+
+  async function startHost(){
+    isHost=true; roomCode=genCode();
+    setLobby("正在创建房间…","warn");
+    $("btnCreate").disabled=true;
+    try{
+      await getMedia();
+      peer=createPeer(NS+roomCode);
+      peer.on("open",(id)=>{
+        $("roomCode").textContent=roomCode;
+        const url=new URL(location.href); url.hash=roomCode;
+        $("shareLink").textContent=url.toString();
+        $("createdBox").classList.remove("hidden");
+        setLobby("房间已就绪，等待对方加入","ok");
+        $("btnJoin").disabled=true;
+      });
+      peer.on("call",(c)=>{ setupCall(c); enterStage(); c.answer(localStream); setCall("已接通","ok"); setPH("🎬","对方已加入",false); });
+      peer.on("connection",(conn)=>{ wireData(conn); });
+      peer.on("error",(e)=>{
+        if(e.type==="unavailable-id"){ roomCode=genCode(); peer.destroy(); startHost(); return; }
+        setLobby("错误："+e.type,"bad");
+      });
+      peer.on("disconnected",()=>{ peer.reconnect(); });
+    }catch(e){
+      setLobby(e.message,"bad"); $("btnCreate").disabled=false;
+    }
+  }
+
+  async function startJoin(code){
+    isHost=false; roomCode=code.trim().toUpperCase();
+    if(!roomCode){ setLobby("请输入房间码","warn"); return; }
+    setLobby("正在连接对方…","warn");
+    $("btnJoin").disabled=true;
+    try{
+      await getMedia();
+      peer=createPeer(undefined); // 随机 id
+      peer.on("open",()=>{
+        const c=peer.call(NS+roomCode, localStream);
+        if(!c){ setLobby("呼叫失败，请检查房间码","bad"); $("btnJoin").disabled=false; return; }
+        setupCall(c);
+        const dc=peer.connect(NS+roomCode);
+        wireData(dc);
+        enterStage();
+        setPH("⏳","正在等待对方接受…",true);
+      });
+      peer.on("error",(e)=>{ setLobby("连接错误："+e.type,"bad"); $("btnJoin").disabled=false; });
+      peer.on("disconnected",()=>{ peer.reconnect(); });
+    }catch(e){
+      setLobby(e.message,"bad"); $("btnJoin").disabled=false;
+    }
+  }
+
+  function endCall(byUser){
+    try{ callObj && callObj.close(); }catch{}
+    try{ dataConn && dataConn.close(); }catch{}
+    try{ peer && peer.destroy(); }catch{}
+    stopScreen(true);
+    if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
+    remoteVideo.srcObject=null; remoteVideo.classList.add("empty");
+    callObj=null; dataConn=null; peer=null;
+    chatBox.innerHTML="";
+    micOn=true; camOn=true; selfVisible=true;
+    showStage(false);
+    setLobby(byUser?"通话已结束":"对方已挂断","warn");
+    $("btnCreate").disabled=false; $("btnJoin").disabled=false;
+  }
+
+  // ============ controls ============
+  function toggleMute(){
+    if(!localStream) return;
+    micOn=!micOn;
+    localStream.getAudioTracks().forEach(t=>t.enabled=micOn);
+    $("btnMute").classList.toggle("off",!micOn);
+    $("muteTxt").textContent = micOn?"静音":"已静音";
+    $("btnMute").querySelector(".ic").textContent = micOn?"🎙️":"🔇";
+    sendState();
+  }
+  function toggleCam(){
+    if(!localStream) return;
+    const vt=localStream.getVideoTracks();
+    if(!vt.length){ alert("没有可用的摄像头。"); return; }
+    camOn=!camOn;
+    vt.forEach(t=>t.enabled=camOn);
+    $("btnCam").classList.toggle("off",!camOn);
+    $("camTxt").textContent = camOn?"关摄像头":"开摄像头";
+    $("selfBox").style.opacity = camOn?"1":".4";
+    sendState();
+  }
+  async function toggleScreen(){
+    if(sendingScreen){ stopScreen(); return; }
+    try{
+      screenStream = await navigator.mediaDevices.getDisplayMedia({video:{frameRate:15}, audio:false});
+    }catch(e){ return; }
+    sendingScreen=true;
+    const track=screenStream.getVideoTracks()[0];
+    // 替换给对方的视频轨道（保留本地预览不变）
+    if(callObj){
+      const sender = callObj.peerConnection.getSenders().find(s=>s.track && s.track.kind==="video");
+      if(sender) sender.replaceTrack(track);
+    }
+    // 本地预览显示屏幕
+    const prev=localStream.getVideoTracks()[0];
+    localVideo.srcObject = new MediaStream([track, ...(localStream.getAudioTracks())]);
+    screenStream.getVideoTracks()[0].addEventListener("ended",()=>stopScreen());
+    $("btnScreen").classList.toggle("off",true);
+    $("screenTxt").textContent="停止共享";
+    sendState();
+  }
+  function stopScreen(silent){
+    if(!sendingScreen && !screenStream) return;
+    try{ screenStream && screenStream.getTracks().forEach(t=>t.stop()); }catch{}
+    screenStream=null; sendingScreen=false;
+    if(callObj && localStream){
+      const vt=localStream.getVideoTracks()[0];
+      const sender = callObj.peerConnection.getSenders().find(s=>s.track && s.track.kind==="video");
+      if(sender && vt) sender.replaceTrack(vt);
+    }
+    if(localStream) localVideo.srcObject=localStream;
+    $("btnScreen").classList.remove("off");
+    $("screenTxt").textContent="共享屏幕";
+    if(!silent) sendState();
+  }
+  function toggleSelf(){
+    selfVisible=!selfVisible;
+    $("selfBox").classList.toggle("hidden-self",!selfVisible);
+    $("btnSelf").textContent = selfVisible?"🪞 隐藏自己":"🪞 显示自己";
+  }
+  function sendChat(){
+    const inp=$("chatInput"); const t=inp.value.trim();
+    if(!t) return;
+    if(dataConn && dataConn.open){ dataConn.send({type:"chat",text:t}); chatMsg("我",t); inp.value=""; }
+    else sysMsg("文字通道未就绪。");
+  }
+
+  // ============ bind ============
+  $("btnCreate").onclick=startHost;
+  $("btnJoin").onclick=()=>startJoin($("joinInput").value);
+  $("joinInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") startJoin($("joinInput").value); });
+  $("btnCopy").onclick=()=>{ navigator.clipboard.writeText($("roomCode").textContent); $("btnCopy").textContent="已复制"; setTimeout(()=>$("btnCopy").textContent="复制",1500); };
+  $("btnCopyLink").onclick=()=>{ navigator.clipboard.writeText($("shareLink").textContent); $("btnCopyLink").textContent="已复制"; setTimeout(()=>$("btnCopyLink").textContent="复制",1500); };
+  $("btnMute").onclick=toggleMute;
+  $("btnCam").onclick=toggleCam;
+  $("btnScreen").onclick=toggleScreen;
+  $("btnSelf").onclick=toggleSelf;
+  $("btnHangup").onclick=()=>endCall(true);
+  $("btnSend").onclick=sendChat;
+  $("chatInput").addEventListener("keydown",(e)=>{ if(e.key==="Enter") sendChat(); });
+
+  // 通过链接 ?join=CODE 或 #CODE 直接加入
+  window.addEventListener("load",()=>{
+    const h=location.hash.replace("#","").trim();
+    const q=new URLSearchParams(location.search).get("join");
+    const code=(q||h).toUpperCase();
+    if(code){ $("joinInput").value=code; startJoin(code); }
+  });
+})();
+</script>
+</body>
+</html>
