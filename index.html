@@ -244,14 +244,28 @@
   }
 
   // ============ media ============
+  function camErrText(name){
+    const m={
+      NotAllowedError:"权限被拒绝——请点浏览器地址栏的摄像头/锁图标，把摄像头和麦克风设为「允许」，然后刷新重试。",
+      PermissionDeniedError:"权限被拒绝——请点浏览器地址栏的摄像头/锁图标，把摄像头和麦克风设为「允许」，然后刷新重试。",
+      NotFoundError:"找不到摄像头或麦克风——请检查设备是否接好、是否被其他应用占用。",
+      DevicesNotFoundError:"找不到摄像头或麦克风——请检查设备是否接好、是否被其他应用占用。",
+      NotReadableError:"摄像头被其他应用占用——请关闭其它正在使用摄像头的程序后重试。",
+      TrackStartError:"摄像头被其他应用占用——请关闭其它正在使用摄像头的程序后重试。",
+      OverconstrainedError:"摄像头不支持所请求的分辨率。",
+      SecurityError:"必须在 HTTPS 或 localhost 下才能访问摄像头。",
+    };
+    return m[name] || ("无法访问摄像头/麦克风（"+name+"）。");
+  }
+
   async function getMedia(){
     if(localStream) return localStream;
     try{
       localStream = await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720}},audio:{echoCancellation:true,noiseSuppression:true}});
     }catch(e){
-      // 允许纯音频
-      try{ localStream = await navigator.mediaDevices.getUserMedia({audio:true}); camOn=false; }
-      catch(e2){ throw new Error("无法访问摄像头/麦克风："+e2.name); }
+      // 摄像头失败 → 降级纯语音
+      try{ localStream = await navigator.mediaDevices.getUserMedia({audio:true}); camOn=false; sysMsg("摄像头不可用，已切换为纯语音。"); }
+      catch(e2){ throw new Error(camErrText(e2.name)); }
     }
     localVideo.srcObject = localStream;
     return localStream;
@@ -334,7 +348,10 @@
         if(e.type==="unavailable-id"){ roomCode=genCode(); peer.destroy(); startHost(); return; }
         setLobby("错误："+e.type,"bad");
       });
-      peer.on("disconnected",()=>{ peer.reconnect(); });
+      peer.on("disconnected",()=>{
+        setLobby("信令已断开，正在重连…（保持本页面打开且在前台，否则对方无法加入）","warn");
+        peer.reconnect();
+      });
     }catch(e){
       setLobby(e.message,"bad"); $("btnCreate").disabled=false;
     }
@@ -345,6 +362,7 @@
     if(!roomCode){ setLobby("请输入房间码","warn"); return; }
     setLobby("正在连接对方…","warn");
     $("btnJoin").disabled=true;
+    let answered=false;
     try{
       await getMedia();
       peer=createPeer(undefined); // 随机 id
@@ -352,12 +370,27 @@
         const c=peer.call(NS+roomCode, localStream);
         if(!c){ setLobby("呼叫失败，请检查房间码","bad"); $("btnJoin").disabled=false; return; }
         setupCall(c);
+        c.on("stream",()=>{ answered=true; });
         const dc=peer.connect(NS+roomCode);
         wireData(dc);
         enterStage();
         setPH("⏳","正在等待对方接受…",true);
+        // 超时：对方不在线时 call() 不会报错，只能靠超时判定
+        setTimeout(()=>{
+          if(!answered){
+            setPH("💤","对方不在线",false);
+            setLobby("对方不在线或房间码有误——请确认对方已打开页面并停留在房间中，再重试","bad");
+          }
+        },12000);
       });
-      peer.on("error",(e)=>{ setLobby("连接错误："+e.type,"bad"); $("btnJoin").disabled=false; });
+      peer.on("error",(e)=>{
+        let msg = e.type==="peer-unavailable" ? "对方不在线（对方页面的标签页可能已关闭或锁屏）。请让对方重新打开页面、待在房间里，再点加入。"
+                : e.type==="network" ? "网络错误，无法连到信令服务器。"
+                : e.type==="unavailable-id" ? "房间码无效。"
+                : "连接错误："+e.type;
+        setLobby(msg,"bad"); $("btnJoin").disabled=false;
+        if(e.type==="peer-unavailable") setPH("💤","对方不在线",false);
+      });
       peer.on("disconnected",()=>{ peer.reconnect(); });
     }catch(e){
       setLobby(e.message,"bad"); $("btnJoin").disabled=false;
